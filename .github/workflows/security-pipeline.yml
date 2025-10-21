@@ -6,13 +6,13 @@ on:
   pull_request:
     branches: [ "main", "master" ]
   schedule:
-    - cron: "0 3 * * 1"   # Her Pazartesi 06:00 TR saati civarı (UTC 03:00)
+    - cron: "0 3 * * 1"   # Her Pazartesi 06:00 TR saati civarı (UTC+3)
   workflow_dispatch:
 
 permissions:
   contents: read
   actions: read
-  security-events: write   # SARIF upload için şart
+  security-events: write   # Code scanning/SARIF upload için şart
   packages: read
 
 concurrency:
@@ -20,50 +20,56 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # --- SAST (Semgrep) ---
-  semgrep:
-    name: SAST (Semgrep)
+  # --- SAST (CodeQL Advanced / Java) ---
+  codeql-advanced:
+    name: SAST (CodeQL - security-extended)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Semgrep (SARIF çıktı)
-      - name: Run Semgrep
-        run: |
-          docker run --rm \
-            -v "$PWD:/src" -w /src \
-            returntocorp/semgrep:latest \
-            semgrep --config p/ci --metrics=off --sarif -o semgrep.sarif || true
-
-      - name: Upload SARIF (Semgrep)
-        uses: github/codeql-action/upload-sarif@v3
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
         with:
-          sarif_file: semgrep.sarif
-          category: semgrep
+          distribution: temurin
+          java-version: "17"
 
-  # --- Secrets (Gitleaks) ---
-  gitleaks:
-    name: Secrets (Gitleaks)
+      - name: Initialize CodeQL (Advanced)
+        uses: github/codeql-action/init@v3
+        with:
+          languages: java
+          # Genişletilmiş güvenlik kuralları
+          queries: +security-extended
+          build-mode: manual
+
+      # WebGoat çok modüllü; sunucu modülü 'webgoat-server'
+      - name: Build (manual for CodeQL)
+        run: |
+          mvn -q -DskipTests -pl webgoat-server -am package
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:java"
+
+  # --- Secrets (TruffleHog) ---
+  trufflehog:
+    name: Secrets (TruffleHog)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (full history for better secrets scan)
+      - name: Checkout (full history for secret hunting)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Run Gitleaks
-        run: |
-          docker run --rm \
-            -v "$PWD:/repo" -w /repo \
-            zricethezav/gitleaks:latest \
-            detect --source . -f sarif -r gitleaks.sarif || true
-
-      - name: Upload SARIF (Gitleaks)
-        uses: github/codeql-action/upload-sarif@v3
+      # TruffleHog'un resmi action'ı; GitHub Code Scanning'e otomatik raporlar
+      - name: Run TruffleHog (git history)
+        uses: trufflesecurity/trufflehog/actions/scan@v3
         with:
-          sarif_file: gitleaks.sarif
-          category: gitleaks
+          scan: git
+          # Sadece doğrulanmış bulguları işaretle (false-positive azaltır)
+          extra_args: --only-verified
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
   # --- Container Image Tarama (Trivy + Grype) ---
   container-scan:
@@ -73,7 +79,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Projede Dockerfile varsa image build et
+      # Projede Dockerfile var → image build et
       - name: Build image
         run: |
           docker build -t app-under-test:ci .
@@ -107,33 +113,3 @@ jobs:
         with:
           sarif_file: grype.sarif
           category: grype
-
-  # --- CodeQL (GitHub Native SAST) ---
-  codeql:
-    name: CodeQL (Code Scanning)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-      actions: read
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [ 'javascript', 'typescript' ]   # Juice Shop için
-        # WebGoat için: ['java'] eklenebilir
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: ${{ matrix.language }}
-
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
-
-      - name: Analyze
-        uses: github/codeql-action/analyze@v3
-        with:
-          category: "/language:${{ matrix.language }}"
