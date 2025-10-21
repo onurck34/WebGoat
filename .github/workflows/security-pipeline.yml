@@ -21,36 +21,50 @@ concurrency:
 
 jobs:
   # --- SAST (CodeQL Advanced / Java) ---
-  codeql-advanced:
-    name: SAST (CodeQL - security-extended)
+  codeql-java:
+    name: SAST (CodeQL Java - security-extended)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
+  
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-
-      - name: Initialize CodeQL (Advanced)
+  
+      - name: Initialize CodeQL (Java)
         uses: github/codeql-action/init@v3
         with:
           languages: java
-          # Genişletilmiş güvenlik kuralları
           queries: +security-extended
-          build-mode: manual
-
-      # WebGoat çok modüllü; sunucu modülü 'webgoat-server'
-      - name: Build (manual for CodeQL)
-        run: |
-          mvn -q -DskipTests -pl webgoat-server -am package
-
-      - name: Analyze
+          build-mode: manual    # derlenen dillerde DB için build şart
+  
+      - name: Build for CodeQL DB
+        run: mvn -q -DskipTests -pl webgoat-server -am package
+  
+      - name: Analyze (Java)
         uses: github/codeql-action/analyze@v3
         with:
           category: "/language:java"
+
+# --- SAST (CodeQL - JavaScript/TypeScript) ---
+  codeql-js:
+    name: SAST (CodeQL JS/TS - security-extended)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+  
+      - name: Initialize CodeQL (JS/TS)
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript      # TypeScript’i de kapsar
+          queries: +security-extended
+          build-mode: none           # JS/TS için build gerekmiyor
+  
+      - name: Analyze (JS/TS)
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:javascript"
 
   # --- Secrets (TruffleHog) ---
   trufflehog:
