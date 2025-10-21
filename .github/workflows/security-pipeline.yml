@@ -1,32 +1,139 @@
-name: Security Pipeline (WebGoat)
+name: Security Pipeline (SAST, Secrets, Container)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
+  schedule:
+    - cron: "0 3 * * 1"   # Her Pazartesi 06:00 TR saati civarı (UTC 03:00)
   workflow_dispatch:
 
 permissions:
   contents: read
-  security-events: write
+  actions: read
+  security-events: write   # SARIF upload için şart
+  packages: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  sast-semgrep:
+  # --- SAST (Semgrep) ---
+  semgrep:
     name: SAST (Semgrep)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run Semgrep scan
+      # Semgrep (SARIF çıktı)
+      - name: Run Semgrep
         run: |
-          docker run --rm -v "$PWD:/src" -w /src returntocorp/semgrep:latest \
-          semgrep --config p/owasp-top-ten --metrics=off --sarif -o semgrep.sarif || true
+          docker run --rm \
+            -v "$PWD:/src" -w /src \
+            returntocorp/semgrep:latest \
+            semgrep --config p/ci --metrics=off --sarif -o semgrep.sarif || true
 
-      - name: Upload Semgrep results to GitHub Security tab
+      - name: Upload SARIF (Semgrep)
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: semgrep.sarif
           category: semgrep
 
+  # --- Secrets (Gitleaks) ---
+  gitleaks:
+    name: Secrets (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for better secrets scan)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        run: |
+          docker run --rm \
+            -v "$PWD:/repo" -w /repo \
+            zricethezav/gitleaks:latest \
+            detect --source . -f sarif -r gitleaks.sarif || true
+
+      - name: Upload SARIF (Gitleaks)
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
+
+  # --- Container Image Tarama (Trivy + Grype) ---
+  container-scan:
+    name: Container Scan (Trivy + Grype)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Projede Dockerfile varsa image build et
+      - name: Build image
+        run: |
+          docker build -t app-under-test:ci .
+
+      # Trivy ile image zafiyet taraması (SARIF)
+      - name: Trivy scan (image)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --scanners vuln \
+            --format sarif -o trivy.sarif \
+            app-under-test:ci || true
+
+      - name: Upload SARIF (Trivy)
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
+
+      # Grype ile image zafiyet taraması (SARIF)
+      - name: Grype scan (image)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            anchore/grype:latest \
+            app-under-test:ci -o sarif > grype.sarif || true
+
+      - name: Upload SARIF (Grype)
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: grype.sarif
+          category: grype
+
+  # --- CodeQL (GitHub Native SAST) ---
+  codeql:
+    name: CodeQL (Code Scanning)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'javascript', 'typescript' ]   # Juice Shop için
+        # WebGoat için: ['java'] eklenebilir
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
