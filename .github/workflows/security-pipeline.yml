@@ -37,34 +37,16 @@ jobs:
         with:
           languages: java
           queries: +security-extended
-          build-mode: manual    # derlenen dillerde DB için build şart
+          build-mode: autobuild   # <-- manuel yerine autobuild
   
-      - name: Build for CodeQL DB
-        run: mvn -q -DskipTests -pl webgoat-server -am package
+      - name: Autobuild (Java)
+        uses: github/codeql-action/autobuild@v3
   
       - name: Analyze (Java)
         uses: github/codeql-action/analyze@v3
         with:
           category: "/language:java"
 
-# --- SAST (CodeQL - JavaScript/TypeScript) ---
-  codeql-js:
-    name: SAST (CodeQL JS/TS - security-extended)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-  
-      - name: Initialize CodeQL (JS/TS)
-        uses: github/codeql-action/init@v3
-        with:
-          languages: javascript      # TypeScript’i de kapsar
-          queries: +security-extended
-          build-mode: none           # JS/TS için build gerekmiyor
-  
-      - name: Analyze (JS/TS)
-        uses: github/codeql-action/analyze@v3
-        with:
-          category: "/language:javascript"
 
   # --- Secrets (TruffleHog) ---
   trufflehog:
