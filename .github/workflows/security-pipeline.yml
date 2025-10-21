@@ -57,19 +57,19 @@ jobs:
     name: Secrets (TruffleHog)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (full history for secret hunting)
+      - name: Checkout (full history)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # TruffleHog'un resmi action'ı; GitHub Code Scanning'e otomatik raporlar
+      # TruffleHog GitHub Action — belirli v3 sürümüne pinliyoruz
       - name: Run TruffleHog (git history)
-        uses: trufflesecurity/trufflehog/actions/scan@v3
+        uses: trufflesecurity/trufflehog@v3.90.11
         with:
-          scan: git
-          # Sadece doğrulanmış bulguları işaretle (false-positive azaltır)
-          extra_args: --only-verified
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+            # Doğrulanmış bulgulara odaklan (false-positive azaltır)
+            extra_args: --results=verified --only-verified
+            github-token: ${{ secrets.GITHUB_TOKEN }}
+
 
   # --- Container Image Tarama (Trivy + Grype) ---
   container-scan:
